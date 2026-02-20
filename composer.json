@@ -1,0 +1,53 @@
+{
+    "name": "adrosoftware/laravel-data-proxy",
+    "description": "A GraphQL-like declarative data retrieval layer for Laravel with query batching and optimization",
+    "keywords": ["laravel", "data", "proxy", "graphql", "batch", "query", "optimization", "dto"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Adro Morelos",
+            "email": "me@adro.rocks"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/database": "^10.0|^11.0|^12.0",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/cache": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "AdroSoftware\\DataProxy\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AdroSoftware\\DataProxy\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AdroSoftware\\DataProxy\\Laravel\\DataProxyServiceProvider"
+            ],
+            "aliases": {
+                "DataProxy": "AdroSoftware\\DataProxy\\Laravel\\DataProxyFacade"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
