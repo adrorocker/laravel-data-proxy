@@ -12,10 +12,10 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static Result fetch(Requirements $requirements)
  * @method static Result query(callable $builder)
- * @method static DataProxy withCache(\DataProxy\Contracts\CacheAdapterInterface $cache)
+ * @method static DataProxy withCache(\AdroSoftware\DataProxy\Contracts\CacheAdapterInterface $cache)
  * @method static DataProxy withoutCache()
- * @method static DataProxy withPresenter(\DataProxy\Contracts\PresenterAdapterInterface $presenter)
- * @method static DataProxy configure(array|callable $config)
+ * @method static DataProxy withPresenter(\AdroSoftware\DataProxy\Contracts\PresenterAdapterInterface $presenter)
+ * @method static DataProxy configure(array<string, mixed>|callable $config)
  * @method static DataProxy forApi()
  * @method static DataProxy forExport()
  * @method static DataProxy forPerformance()

@@ -7,8 +7,9 @@ namespace AdroSoftware\DataProxy;
 /**
  * Package configuration
  */
-class Config
+final class Config
 {
+    /** @var array<string, mixed> */
     protected static array $defaults = [
         'cache' => [
             'enabled' => true,
@@ -38,8 +39,12 @@ class Config
         ],
     ];
 
+    /** @var array<string, mixed> */
     protected array $config;
 
+    /**
+     * @param array<string, mixed> $config
+     */
     public function __construct(array $config = [])
     {
         $this->config = array_replace_recursive(static::$defaults, $config);
@@ -60,16 +65,20 @@ class Config
         return $value;
     }
 
-    public function set(string $key, mixed $value): static
+    public function set(string $key, mixed $value): self
     {
         $keys = explode('.', $key);
+        /** @var array<string, mixed> $config */
         $config = &$this->config;
 
         foreach ($keys as $i => $k) {
             if ($i === count($keys) - 1) {
                 $config[$k] = $value;
             } else {
-                $config[$k] ??= [];
+                if (!isset($config[$k]) || !is_array($config[$k])) {
+                    $config[$k] = [];
+                }
+                /** @var array<string, mixed> $config */
                 $config = &$config[$k];
             }
         }
@@ -77,12 +86,18 @@ class Config
         return $this;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function all(): array
     {
         return $this->config;
     }
 
-    public function merge(array $config): static
+    /**
+     * @param array<string, mixed> $config
+     */
+    public function merge(array $config): self
     {
         $this->config = array_replace_recursive($this->config, $config);
         return $this;

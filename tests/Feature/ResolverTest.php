@@ -15,7 +15,6 @@ use AdroSoftware\DataProxy\Tests\Fixtures\Models\Profile;
 use AdroSoftware\DataProxy\Tests\Fixtures\Models\User;
 use AdroSoftware\DataProxy\Tests\TestCase;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 
 class ResolverTest extends TestCase
 {
@@ -197,10 +196,16 @@ class ResolverTest extends TestCase
         Post::create(['user_id' => $user->id, 'title' => 'Second Post', 'body' => 'More content']);
 
         $requirements = Requirements::make()
-            ->one('user', User::class, $user->id, Shape::make()
-                ->with('posts', Shape::make()
-                    ->select('id', 'user_id', 'title')  // Include user_id for relation
-                )
+            ->one(
+                'user',
+                User::class,
+                $user->id,
+                Shape::make()
+                ->with(
+                    'posts',
+                    Shape::make()
+                    ->select('id', 'user_id', 'title'),  // Include user_id for relation
+                ),
             );
 
         $result = $this->createResolver($requirements)->resolve();
@@ -217,8 +222,11 @@ class ResolverTest extends TestCase
         User::create(['name' => 'Old', 'email' => 'old@example.com', 'age' => 60]);
 
         $requirements = Requirements::make()
-            ->query('adults', User::class, Shape::make()
-                ->where('age', '>=', 21)
+            ->query(
+                'adults',
+                User::class,
+                Shape::make()
+                ->where('age', '>=', 21),
             );
 
         $result = $this->createResolver($requirements)->resolve();
@@ -234,8 +242,11 @@ class ResolverTest extends TestCase
         $user3 = User::create(['name' => 'User 3', 'email' => 'user3@example.com']);
 
         $requirements = Requirements::make()
-            ->query('selected', User::class, Shape::make()
-                ->whereIn('id', [$user1->id, $user3->id])
+            ->query(
+                'selected',
+                User::class,
+                Shape::make()
+                ->whereIn('id', [$user1->id, $user3->id]),
             );
 
         $result = $this->createResolver($requirements)->resolve();
@@ -250,8 +261,11 @@ class ResolverTest extends TestCase
         User::create(['name' => 'User 3', 'email' => 'user3@example.com']);
 
         $requirements = Requirements::make()
-            ->query('others', User::class, Shape::make()
-                ->whereNotIn('id', [$user1->id])
+            ->query(
+                'others',
+                User::class,
+                Shape::make()
+                ->whereNotIn('id', [$user1->id]),
             );
 
         $result = $this->createResolver($requirements)->resolve();
@@ -280,8 +294,11 @@ class ResolverTest extends TestCase
         User::create(['name' => 'Charlie', 'email' => 'charlie@example.com']);
 
         $requirements = Requirements::make()
-            ->query('sorted', User::class, Shape::make()
-                ->orderBy('name', 'asc')
+            ->query(
+                'sorted',
+                User::class,
+                Shape::make()
+                ->orderBy('name', 'asc'),
             );
 
         $result = $this->createResolver($requirements)->resolve();
@@ -297,10 +314,13 @@ class ResolverTest extends TestCase
         }
 
         $requirements = Requirements::make()
-            ->query('page', User::class, Shape::make()
+            ->query(
+                'page',
+                User::class,
+                Shape::make()
                 ->orderBy('id')
                 ->limit(3)
-                ->offset(2)
+                ->offset(2),
             );
 
         $result = $this->createResolver($requirements)->resolve();
@@ -315,8 +335,11 @@ class ResolverTest extends TestCase
         User::create(['name' => 'Inactive', 'email' => 'inactive@example.com', 'age' => 0]);
 
         $requirements = Requirements::make()
-            ->query('active', User::class, Shape::make()
-                ->scope(fn($query) => $query->where('age', '>', 0))
+            ->query(
+                'active',
+                User::class,
+                Shape::make()
+                ->scope(fn($query) => $query->where('age', '>', 0)),
             );
 
         $result = $this->createResolver($requirements)->resolve();

@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Cache;
 class LaravelCacheAdapter implements CacheAdapterInterface
 {
     protected ?string $store;
+
+    /** @var array<int, string> */
     protected array $tags = [];
 
     public function __construct(?string $store = null)
@@ -45,6 +47,9 @@ class LaravelCacheAdapter implements CacheAdapterInterface
         $this->cache()->forget($key);
     }
 
+    /**
+     * @param array<int, string> $tags
+     */
     public function tags(array $tags): static
     {
         $clone = clone $this;
@@ -52,12 +57,20 @@ class LaravelCacheAdapter implements CacheAdapterInterface
         return $clone;
     }
 
-    protected function cache()
+    /**
+     * @return \Illuminate\Contracts\Cache\Repository
+     */
+    protected function cache(): \Illuminate\Contracts\Cache\Repository
     {
-        $cache = $this->store ? Cache::store($this->store) : Cache::getFacadeRoot();
+        /** @var \Illuminate\Cache\CacheManager $cacheManager */
+        $cacheManager = Cache::getFacadeRoot();
 
-        if (!empty($this->tags) && method_exists($cache->getStore(), 'tags')) {
-            return $cache->tags($this->tags);
+        /** @var \Illuminate\Contracts\Cache\Repository $cache */
+        $cache = $this->store ? $cacheManager->store($this->store) : $cacheManager->store();
+
+        if (!empty($this->tags) && method_exists($cacheManager->getStore(), 'tags')) {
+            /** @var \Illuminate\Contracts\Cache\Repository */
+            return $cacheManager->tags($this->tags);
         }
 
         return $cache;

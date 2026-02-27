@@ -11,12 +11,22 @@ use JsonSerializable;
 
 /**
  * The final result DTO containing all resolved data
+ *
+ * @implements ArrayAccess<string, mixed>
+ * @implements Arrayable<string, mixed>
  */
-class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
+final class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 {
+    /** @var array<string, mixed> */
     protected array $data;
+
+    /** @var array<string, mixed> */
     protected array $metrics;
 
+    /**
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $metrics
+     */
     public function __construct(array $data, array $metrics = [])
     {
         $this->data = $data;
@@ -57,6 +67,8 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 
     /**
      * Get all data
+     *
+     * @return array<string, mixed>
      */
     public function all(): array
     {
@@ -65,6 +77,9 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 
     /**
      * Get only specified keys
+     *
+     * @param array<int, string> $keys
+     * @return array<string, mixed>
      */
     public function only(array $keys): array
     {
@@ -73,6 +88,9 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 
     /**
      * Get all except specified keys
+     *
+     * @param array<int, string> $keys
+     * @return array<string, mixed>
      */
     public function except(array $keys): array
     {
@@ -81,6 +99,8 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 
     /**
      * Get execution metrics
+     *
+     * @return array<string, mixed>
      */
     public function metrics(): array
     {
@@ -90,18 +110,20 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
     /**
      * Merge with another result
      */
-    public function merge(Result $other): static
+    public function merge(Result $other): self
     {
-        return new static(
+        return new self(
             array_merge($this->data, $other->data),
-            array_merge_recursive($this->metrics, $other->metrics)
+            array_merge_recursive($this->metrics, $other->metrics),
         );
     }
 
     /**
      * Transform specific values
+     *
+     * @param array<string, callable(mixed): mixed> $transformers
      */
-    public function transform(array $transformers): static
+    public function transform(array $transformers): self
     {
         $data = $this->data;
 
@@ -111,7 +133,7 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
             }
         }
 
-        return new static($data, $this->metrics);
+        return new self($data, $this->metrics);
     }
 
     /**
@@ -156,6 +178,9 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
         return !$this->isEmpty();
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function toArray(): array
     {
         return array_map(function ($value) {
@@ -174,9 +199,14 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 
     public function toJson($options = 0): string
     {
-        return json_encode($this->jsonSerialize(), $options);
+        $json = json_encode($this->jsonSerialize(), $options);
+
+        return $json === false ? '{}' : $json;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function jsonSerialize(): array
     {
         return $this->toArray();
@@ -184,6 +214,8 @@ class Result implements Arrayable, Jsonable, JsonSerializable, ArrayAccess
 
     /**
      * Format for API responses with optional metadata
+     *
+     * @return array<string, mixed>
      */
     public function toResponse(bool $includeMetrics = false): array
     {

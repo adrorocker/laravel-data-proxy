@@ -7,7 +7,6 @@ namespace AdroSoftware\DataProxy\Tests\Feature;
 use AdroSoftware\DataProxy\Adapters\LaravelModelPresenterAdapter;
 use AdroSoftware\DataProxy\Tests\Fixtures\Models\User;
 use AdroSoftware\DataProxy\Tests\TestCase;
-use Illuminate\Database\Eloquent\Model;
 
 // Test presenter class
 class UserPresenter

@@ -15,14 +15,14 @@ class PaginatedResultTest extends TestCase
         array $items,
         int $total,
         int $perPage,
-        int $currentPage = 1
+        int $currentPage = 1,
     ): LengthAwarePaginator {
         return new LengthAwarePaginator(
             $items,
             $total,
             $perPage,
             $currentPage,
-            ['path' => 'http://example.com']
+            ['path' => 'http://example.com'],
         );
     }
 

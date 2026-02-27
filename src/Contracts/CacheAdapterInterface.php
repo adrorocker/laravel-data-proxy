@@ -31,6 +31,8 @@ interface CacheAdapterInterface
 
     /**
      * Apply cache tags (if supported)
+     *
+     * @param array<int, string> $tags
      */
     public function tags(array $tags): static;
 }

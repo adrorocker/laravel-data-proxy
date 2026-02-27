@@ -16,10 +16,13 @@
         "illuminate/cache": "^10.0|^11.0|^12.0"
     },
     "require-dev": {
+        "larastan/larastan": "^3.9",
+        "laravel/pint": "^1.27",
         "mockery/mockery": "^1.6",
         "orchestra/testbench": "^8.0|^9.0|^10.0",
         "pestphp/pest": "^3.0",
         "pestphp/pest-plugin-laravel": "^3.0",
+        "phpstan/phpstan": "^2.1",
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
@@ -50,6 +53,14 @@
         "allow-plugins": {
             "pestphp/pest-plugin": true
         }
+    },
+    "scripts": {
+        "test": "pest",
+        "test:watch": "pest --watch",
+        "lint": "pint --test --preset=per",
+        "lint:fix": "pint --preset=per",
+        "analyse": "phpstan analyse",
+        "check": ["@lint", "@analyse", "@test"]
     },
     "minimum-stability": "stable",
     "prefer-stable": true

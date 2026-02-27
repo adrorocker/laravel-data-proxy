@@ -8,7 +8,6 @@ use AdroSoftware\DataProxy\Contracts\CacheAdapterInterface;
 use AdroSoftware\DataProxy\Contracts\PresenterAdapterInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -21,7 +20,10 @@ class Resolver
     protected ?CacheAdapterInterface $cache;
     protected ?PresenterAdapterInterface $presenter;
 
+    /** @var array<string, mixed> */
     protected array $resolved = [];
+
+    /** @var array<string, int|float> */
     protected array $metrics = [
         'queries' => 0,
         'cache_hits' => 0,
@@ -32,7 +34,7 @@ class Resolver
         Requirements $requirements,
         Config $config,
         ?CacheAdapterInterface $cache = null,
-        ?PresenterAdapterInterface $presenter = null
+        ?PresenterAdapterInterface $presenter = null,
     ) {
         $this->requirements = $requirements;
         $this->config = $config;
@@ -86,11 +88,17 @@ class Resolver
         }
 
         $cacheConfig = $this->requirements->getCache();
+        /** @var string $prefix */
         $prefix = $this->config->get('cache.prefix');
 
         foreach ($cacheConfig as $alias => $conf) {
-            $key = $this->hashCacheKey($prefix . $conf['key']);
-            $cache = !empty($conf['tags']) ? $this->cache->tags($conf['tags']) : $this->cache;
+            /** @var string $cacheKey */
+            $cacheKey = $conf['key'];
+            /** @var array<int, string> $tags */
+            $tags = $conf['tags'] ?? [];
+
+            $key = $this->hashCacheKey($prefix . $cacheKey);
+            $cache = !empty($tags) ? $this->cache->tags($tags) : $this->cache;
 
             // Use atomic get() instead of has() + get() to prevent race condition
             $value = $cache->get($key);
@@ -116,7 +124,9 @@ class Resolver
         }
 
         $cacheConfig = $this->requirements->getCache();
+        /** @var string $prefix */
         $prefix = $this->config->get('cache.prefix');
+        /** @var int|null $defaultTtl */
         $defaultTtl = $this->config->get('cache.ttl');
 
         foreach ($cacheConfig as $alias => $conf) {
@@ -124,9 +134,15 @@ class Resolver
                 continue;
             }
 
-            $key = $this->hashCacheKey($prefix . $conf['key']);
+            /** @var string $cacheKey */
+            $cacheKey = $conf['key'];
+            /** @var int|null $ttl */
             $ttl = $conf['ttl'] ?? $defaultTtl;
-            $cache = !empty($conf['tags']) ? $this->cache->tags($conf['tags']) : $this->cache;
+            /** @var array<int, string> $tags */
+            $tags = $conf['tags'] ?? [];
+
+            $key = $this->hashCacheKey($prefix . $cacheKey);
+            $cache = !empty($tags) ? $this->cache->tags($tags) : $this->cache;
 
             $cache->set($key, $this->resolved[$alias], $ttl);
         }
@@ -135,6 +151,7 @@ class Resolver
     protected function resolveEntities(): void
     {
         $entities = $this->requirements->getEntities();
+        /** @var array<class-string<Model>, array<string, array<string, mixed>>> $byModel */
         $byModel = [];
 
         // Group by model for batching
@@ -143,6 +160,7 @@ class Resolver
                 continue; // Already from cache
             }
 
+            /** @var class-string<Model> $model */
             $model = $entity['model'];
             $byModel[$model] ??= [];
             $byModel[$model][$alias] = $entity;
@@ -154,6 +172,10 @@ class Resolver
         }
     }
 
+    /**
+     * @param class-string<Model> $modelClass
+     * @param array<string, array<string, mixed>> $entities
+     */
     protected function batchResolveEntities(string $modelClass, array $entities): void
     {
         // Validate model class
@@ -174,7 +196,9 @@ class Resolver
                 $allIds = array_merge($allIds, $ids);
             }
 
-            $allRelations = array_merge($allRelations, $this->extractRelations($entity['shape']));
+            /** @var Shape $shape */
+            $shape = $entity['shape'];
+            $allRelations = array_merge($allRelations, $this->extractRelations($shape));
         }
 
         $allIds = array_values(array_unique(array_filter($allIds)));
@@ -188,7 +212,7 @@ class Resolver
         }
 
         // Build single query
-        $primaryKey = (new $modelClass)->getKeyName();
+        $primaryKey = (new $modelClass())->getKeyName();
         $query = $modelClass::whereIn($primaryKey, $allIds);
 
         // Collect fields (union of all)
@@ -213,18 +237,26 @@ class Resolver
 
         // Distribute to aliases
         foreach ($entities as $alias => $entity) {
+            /** @var Shape $shape */
             $shape = $entity['shape'];
 
             if ($entity['type'] === 'one') {
                 $id = $this->resolveValue($entity['id']);
-                $model = $results->get($id);
+                /** @var int|string|null $resolvedId */
+                $resolvedId = $id;
+                $model = $results->get($resolvedId);
                 $this->resolved[$alias] = $shape->shouldReturnArray() && $model
                     ? $model->toArray()
                     : $model;
             } else {
                 $ids = (array) $this->resolveValue($entity['ids']);
                 $items = collect($ids)
-                    ->map(fn($id) => $results->get($id))
+                    ->map(function (mixed $id) use ($results): ?Model {
+                        if (!is_int($id) && !is_string($id)) {
+                            return null;
+                        }
+                        return $results->get($id);
+                    })
                     ->filter()
                     ->values();
 
@@ -244,16 +276,18 @@ class Resolver
                 continue;
             }
 
+            /** @var class-string<Model> $modelClass */
             $modelClass = $queryDef['model'];
             $this->validateModelClass($modelClass);
 
+            /** @var Shape $shape */
             $shape = $queryDef['shape'];
             $query = $modelClass::query();
 
             // Select fields
             $fields = $shape->getFields();
             if ($fields !== ['*']) {
-                $primaryKey = (new $modelClass)->getKeyName();
+                $primaryKey = (new $modelClass())->getKeyName();
                 if (!in_array($primaryKey, $fields)) {
                     array_unshift($fields, $primaryKey);
                 }
@@ -281,7 +315,11 @@ class Resolver
 
             // Pagination or limit/offset
             if (!empty($queryDef['paginate'])) {
-                $result = $query->paginate($queryDef['perPage'], ['*'], 'page', $queryDef['page']);
+                /** @var int $perPage */
+                $perPage = $queryDef['perPage'];
+                /** @var int|null $page */
+                $page = $queryDef['page'] ?? null;
+                $result = $query->paginate($perPage, ['*'], 'page', $page);
                 $this->resolved[$alias] = new PaginatedResult($result);
             } else {
                 if ($limit = $shape->getLimit()) {
@@ -307,6 +345,7 @@ class Resolver
     protected function resolveAggregates(): void
     {
         $aggregates = $this->requirements->getAggregates();
+        /** @var array<class-string<Model>, array<string, array<string, mixed>>> $byModel */
         $byModel = [];
 
         // Group by model for potential batching
@@ -315,6 +354,7 @@ class Resolver
                 continue;
             }
 
+            /** @var class-string<Model> $model */
             $model = $agg['model'];
             $byModel[$model] ??= [];
             $byModel[$model][$alias] = $agg;
@@ -332,11 +372,17 @@ class Resolver
         }
     }
 
+    /**
+     * @param array<string, array<string, mixed>> $aggregates
+     */
     protected function canBatchAggregates(array $aggregates): bool
     {
+        /** @var array<int, array<string, mixed>>|null $first */
         $first = null;
         foreach ($aggregates as $agg) {
-            $constraints = $agg['shape']->getConstraints();
+            /** @var Shape $shape */
+            $shape = $agg['shape'];
+            $constraints = $shape->getConstraints();
             if ($first === null) {
                 $first = $constraints;
             } elseif ($constraints !== $first) {
@@ -351,12 +397,23 @@ class Resolver
      */
     protected const ALLOWED_AGGREGATE_TYPES = ['count', 'sum', 'avg', 'min', 'max'];
 
+    /**
+     * @param class-string<Model> $modelClass
+     * @param array<string, array<string, mixed>> $aggregates
+     */
     protected function batchResolveAggregates(string $modelClass, array $aggregates): void
     {
         $selects = [];
         $first = reset($aggregates);
+        if ($first === false) {
+            return;
+        }
 
         foreach ($aggregates as $alias => $agg) {
+            if (!is_string($agg['type']) || !is_string($agg['column'])) {
+                throw new \InvalidArgumentException('Aggregate type and column must be strings');
+            }
+
             $type = strtolower($agg['type']);
             $column = $agg['column'];
 
@@ -381,19 +438,27 @@ class Resolver
         }
 
         $query = $modelClass::query()->select($selects);
-        $this->applyConstraints($query, $first['shape']->getConstraints());
+        /** @var Shape $firstShape */
+        $firstShape = $first['shape'];
+        $this->applyConstraints($query, $firstShape->getConstraints());
 
         $result = $query->first();
         $this->metrics['queries']++;
 
         foreach ($aggregates as $alias => $agg) {
-            // Null-safe access to prevent NPE when query returns no results
-            $this->resolved[$alias] = $result?->{$alias} ?? 0;
+            $this->resolved[$alias] = $result->{$alias} ?? 0;
         }
     }
 
+    /**
+     * @param array<string, mixed> $agg
+     */
     protected function resolveSingleAggregate(string $alias, array $agg): void
     {
+        if (!is_string($agg['type']) || !is_string($agg['column'])) {
+            throw new \InvalidArgumentException('Aggregate type and column must be strings');
+        }
+
         $type = strtolower($agg['type']);
         $column = $agg['column'];
 
@@ -407,8 +472,13 @@ class Resolver
             throw new \InvalidArgumentException("Invalid column name: {$column}");
         }
 
-        $query = $agg['model']::query();
-        $this->applyConstraints($query, $agg['shape']->getConstraints());
+        /** @var class-string<Model> $modelClass */
+        $modelClass = $agg['model'];
+        /** @var Shape $shape */
+        $shape = $agg['shape'];
+
+        $query = $modelClass::query();
+        $this->applyConstraints($query, $shape->getConstraints());
 
         $this->resolved[$alias] = $query->{$type}($column);
         $this->metrics['queries']++;
@@ -421,7 +491,11 @@ class Resolver
                 continue;
             }
 
-            $results = DB::select($raw['sql'], $raw['bindings']);
+            /** @var string $sql */
+            $sql = $raw['sql'];
+            /** @var array<int, mixed> $bindings */
+            $bindings = $raw['bindings'];
+            $results = DB::select($sql, $bindings);
             $this->resolved[$alias] = new DataSet($results, count($results));
             $this->metrics['queries']++;
         }
@@ -442,7 +516,9 @@ class Resolver
 
                 // Check dependencies
                 $canResolve = true;
-                foreach ($comp['depends'] as $dep) {
+                /** @var array<int, string> $depends */
+                $depends = $comp['depends'];
+                foreach ($depends as $dep) {
                     if (!array_key_exists($dep, $this->resolved)) {
                         $canResolve = false;
                         break;
@@ -450,7 +526,9 @@ class Resolver
                 }
 
                 if ($canResolve) {
-                    $this->resolved[$alias] = ($comp['computer'])($this->resolved);
+                    /** @var callable(array<string, mixed>): mixed $computer */
+                    $computer = $comp['computer'];
+                    $this->resolved[$alias] = $computer($this->resolved);
                     $resolved[$alias] = true;
                 }
             }
@@ -471,7 +549,9 @@ class Resolver
                 continue;
             }
 
-            $presenterClass = $def['shape']->getPresenter();
+            /** @var Shape $shape */
+            $shape = $def['shape'];
+            $presenterClass = $shape->getPresenter();
             if (!$presenterClass) {
                 continue;
             }
@@ -482,7 +562,7 @@ class Resolver
                 $this->resolved[$alias] = $data->map(
                     fn($item) => $item instanceof Model
                         ? $this->presenter->present($item, $presenterClass)
-                        : $item
+                        : $item,
                 );
             } elseif ($data instanceof Model) {
                 $this->resolved[$alias] = $this->presenter->present($data, $presenterClass);
@@ -490,6 +570,9 @@ class Resolver
         }
     }
 
+    /**
+     * @return array<int, string>
+     */
     protected function extractRelations(Shape $shape): array
     {
         $relations = [];
@@ -507,24 +590,33 @@ class Resolver
         return $relations;
     }
 
+    /**
+     * @param array<string, array<string, mixed>> $entities
+     * @return array<int|string, \Closure|string>
+     */
     protected function buildEagerLoads(array $entities): array
     {
         $loads = [];
 
         foreach ($entities as $entity) {
-            $loads = array_merge($loads, $this->buildEagerLoadForShape($entity['shape']));
+            /** @var Shape $shape */
+            $shape = $entity['shape'];
+            $loads = array_merge($loads, $this->buildEagerLoadForShape($shape));
         }
 
         return $loads;
     }
 
+    /**
+     * @return array<int|string, \Closure|string>
+     */
     protected function buildEagerLoadForShape(Shape $shape): array
     {
         $loads = [];
 
         foreach ($shape->getRelations() as $relation => $nestedShape) {
             if ($nestedShape instanceof Shape) {
-                $loads[$relation] = function ($query) use ($nestedShape) {
+                $loads[$relation] = function ($query) use ($nestedShape): void {
                     $fields = $nestedShape->getFields();
                     if ($fields !== ['*']) {
                         $query->select($fields);
@@ -547,7 +639,7 @@ class Resolver
                     }
                 };
             } elseif (is_callable($nestedShape)) {
-                $loads[$relation] = $nestedShape;
+                $loads[$relation] = \Closure::fromCallable($nestedShape);
             } else {
                 $loads[] = $relation;
             }
@@ -556,12 +648,18 @@ class Resolver
         return $loads;
     }
 
+    /**
+     * @param array<string, array<string, mixed>> $entities
+     * @return array<int, string>
+     */
     protected function collectFields(array $entities): array
     {
         $fields = [];
 
         foreach ($entities as $entity) {
-            $shapeFields = $entity['shape']->getFields();
+            /** @var Shape $shape */
+            $shape = $entity['shape'];
+            $shapeFields = $shape->getFields();
             if ($shapeFields === ['*']) {
                 return ['*'];
             }
@@ -571,21 +669,79 @@ class Resolver
         return array_values(array_unique($fields));
     }
 
+    /**
+     * @param Builder<Model>|\Illuminate\Database\Eloquent\Relations\Relation<Model, Model, mixed> $query
+     * @param array<int, array<string, mixed>> $constraints
+     */
     protected function applyConstraints(Builder|\Illuminate\Database\Eloquent\Relations\Relation $query, array $constraints): void
     {
         foreach ($constraints as $c) {
-            match ($c['type']) {
-                'basic' => $query->where($c['column'], $c['operator'], $this->resolveValue($c['value'])),
-                'in' => $query->whereIn($c['column'], $this->resolveValue($c['values'])),
-                'notIn' => $query->whereNotIn($c['column'], $this->resolveValue($c['values'])),
-                'between' => $query->whereBetween($c['column'], $c['range']),
-                'null' => $query->whereNull($c['column']),
-                'notNull' => $query->whereNotNull($c['column']),
-                'has' => $query->whereHas($c['relation'], $c['callback']),
-                'doesntHave' => $query->whereDoesntHave($c['relation'], $c['callback']),
-                'raw' => $query->whereRaw($c['sql'], $c['bindings']),
-                default => null,
-            };
+            /** @var string $type */
+            $type = $c['type'];
+
+            switch ($type) {
+                case 'basic':
+                    /** @var string $column */
+                    $column = $c['column'];
+                    /** @var string $operator */
+                    $operator = $c['operator'];
+                    $query->where($column, $operator, $this->resolveValue($c['value']));
+                    break;
+                case 'in':
+                    /** @var string $column */
+                    $column = $c['column'];
+                    /** @var array<int, mixed> $values */
+                    $values = $this->resolveValue($c['values']);
+                    $query->whereIn($column, $values);
+                    break;
+                case 'notIn':
+                    /** @var string $column */
+                    $column = $c['column'];
+                    /** @var array<int, mixed> $values */
+                    $values = $this->resolveValue($c['values']);
+                    $query->whereNotIn($column, $values);
+                    break;
+                case 'between':
+                    /** @var string $column */
+                    $column = $c['column'];
+                    /** @var array{0: mixed, 1: mixed} $range */
+                    $range = $c['range'];
+                    $query->whereBetween($column, $range);
+                    break;
+                case 'null':
+                    /** @var string $column */
+                    $column = $c['column'];
+                    $query->whereNull($column);
+                    break;
+                case 'notNull':
+                    /** @var string $column */
+                    $column = $c['column'];
+                    $query->whereNotNull($column);
+                    break;
+                case 'has':
+                    /** @var string $relation */
+                    $relation = $c['relation'];
+                    $callback = isset($c['callback']) && is_callable($c['callback'])
+                        ? \Closure::fromCallable($c['callback'])
+                        : null;
+                    $query->whereHas($relation, $callback);
+                    break;
+                case 'doesntHave':
+                    /** @var string $relation */
+                    $relation = $c['relation'];
+                    $callback = isset($c['callback']) && is_callable($c['callback'])
+                        ? \Closure::fromCallable($c['callback'])
+                        : null;
+                    $query->whereDoesntHave($relation, $callback);
+                    break;
+                case 'raw':
+                    /** @var string $sql */
+                    $sql = $c['sql'];
+                    /** @var array<int, mixed> $bindings */
+                    $bindings = $c['bindings'] ?? [];
+                    $query->whereRaw($sql, $bindings);
+                    break;
+            }
         }
     }
 

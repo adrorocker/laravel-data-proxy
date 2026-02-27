@@ -11,15 +11,17 @@ use Illuminate\Database\Eloquent\Model;
  * Adapter for adrorocker/laravel-model-presenter
  * Install: composer require adrorocker/laravel-model-presenter
  */
-class LaravelModelPresenterAdapter implements PresenterAdapterInterface
+final class LaravelModelPresenterAdapter implements PresenterAdapterInterface
 {
     protected string $namespace;
     protected string $suffix;
+
+    /** @var array<class-string<Model>, class-string> */
     protected array $map = [];
 
     public function __construct(
         string $namespace = 'App\\Presenters\\',
-        string $suffix = 'Presenter'
+        string $suffix = 'Presenter',
     ) {
         $this->namespace = $namespace;
         $this->suffix = $suffix;
@@ -27,8 +29,11 @@ class LaravelModelPresenterAdapter implements PresenterAdapterInterface
 
     /**
      * Register a specific model-presenter mapping
+     *
+     * @param class-string<Model> $modelClass
+     * @param class-string $presenterClass
      */
-    public function register(string $modelClass, string $presenterClass): static
+    public function register(string $modelClass, string $presenterClass): self
     {
         $this->map[$modelClass] = $presenterClass;
         return $this;
@@ -36,8 +41,10 @@ class LaravelModelPresenterAdapter implements PresenterAdapterInterface
 
     /**
      * Register multiple mappings at once
+     *
+     * @param array<class-string<Model>, class-string> $mappings
      */
-    public function registerMany(array $mappings): static
+    public function registerMany(array $mappings): self
     {
         foreach ($mappings as $modelClass => $presenterClass) {
             $this->map[$modelClass] = $presenterClass;
@@ -95,7 +102,7 @@ class LaravelModelPresenterAdapter implements PresenterAdapterInterface
     /**
      * Set the namespace for auto-discovery
      */
-    public function setNamespace(string $namespace): static
+    public function setNamespace(string $namespace): self
     {
         $this->namespace = $namespace;
         return $this;
@@ -104,7 +111,7 @@ class LaravelModelPresenterAdapter implements PresenterAdapterInterface
     /**
      * Set the suffix for auto-discovery
      */
-    public function setSuffix(string $suffix): static
+    public function setSuffix(string $suffix): self
     {
         $this->suffix = $suffix;
         return $this;

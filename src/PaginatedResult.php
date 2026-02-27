@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace AdroSoftware\DataProxy;
 
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Pagination\LengthAwarePaginator;
 use IteratorAggregate;
 use Traversable;
 use Countable;
@@ -13,11 +13,19 @@ use JsonSerializable;
 
 /**
  * Wrapper for paginated results
+ *
+ * @template TValue
+ * @implements IteratorAggregate<int, TValue>
+ * @implements Arrayable<string, mixed>
  */
-class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggregate, Countable
+final class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggregate, Countable
 {
+    /** @var LengthAwarePaginator<int, TValue> */
     protected LengthAwarePaginator $paginator;
 
+    /**
+     * @param LengthAwarePaginator<int, TValue> $paginator
+     */
     public function __construct(LengthAwarePaginator $paginator)
     {
         $this->paginator = $paginator;
@@ -25,10 +33,12 @@ class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggregate,
 
     /**
      * Get items as DataSet
+     *
+     * @return DataSet<int, TValue>
      */
     public function items(): DataSet
     {
-        return new DataSet($this->paginator->items(), $this->paginator->count());
+        return new DataSet($this->paginator->items(), count($this->paginator->items()));
     }
 
     /**
@@ -89,12 +99,17 @@ class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggregate,
 
     /**
      * Get the underlying paginator
+     *
+     * @return LengthAwarePaginator<int, TValue>
      */
     public function getPaginator(): LengthAwarePaginator
     {
         return $this->paginator;
     }
 
+    /**
+     * @return Traversable<int, TValue>
+     */
     public function getIterator(): Traversable
     {
         return $this->items()->getIterator();
@@ -102,14 +117,17 @@ class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggregate,
 
     public function count(): int
     {
-        return $this->paginator->count();
+        return count($this->paginator->items());
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function toArray(): array
     {
         return [
             'data' => collect($this->paginator->items())->map(
-                fn($item) => $item instanceof Arrayable ? $item->toArray() : $item
+                fn($item) => $item instanceof Arrayable ? $item->toArray() : $item,
             )->all(),
             'pagination' => [
                 'total' => $this->total(),
@@ -121,6 +139,9 @@ class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggregate,
         ];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function jsonSerialize(): array
     {
         return $this->toArray();

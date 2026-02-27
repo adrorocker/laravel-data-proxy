@@ -13,33 +13,60 @@ use JsonSerializable;
 
 /**
  * Memory-efficient, lazy data collection
+ *
+ * @template TKey of array-key
+ * @template TValue
+ * @implements IteratorAggregate<TKey, TValue>
+ * @implements Arrayable<TKey, TValue>
  */
-class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializable
+final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializable
 {
+    /** @var iterable<TKey, TValue> */
     protected iterable $source;
     protected ?int $count;
+
+    /** @var array<TKey, TValue>|null */
     protected ?array $materialized = null;
+
+    /** @var array<int, callable(TValue, TKey): (TValue|false)> */
     protected array $pipes = [];
 
+    /**
+     * @param iterable<TKey, TValue> $source
+     */
     public function __construct(iterable $source, ?int $count = null)
     {
         $this->source = $source;
         $this->count = $count;
     }
 
-    public static function empty(): static
+    /**
+     * @return self<int, mixed>
+     */
+    public static function empty(): self
     {
-        return new static([], 0);
+        return new self([], 0);
     }
 
-    public static function from(iterable $source, ?int $count = null): static
+    /**
+     * @template TNewKey of array-key
+     * @template TNewValue
+     * @param iterable<TNewKey, TNewValue> $source
+     * @return self<TNewKey, TNewValue>
+     */
+    public static function from(iterable $source, ?int $count = null): self
     {
         if ($source instanceof Collection) {
-            return new static($source, $source->count());
+            /** @var self<TNewKey, TNewValue> */
+            return new self($source, $source->count());
         }
-        return new static($source, $count);
+        /** @var self<TNewKey, TNewValue> */
+        return new self($source, $count);
     }
 
+    /**
+     * @return Traversable<TKey, TValue>
+     */
     public function getIterator(): Traversable
     {
         $source = $this->materialized ?? $this->source;
@@ -58,8 +85,10 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Lazy map - doesn't execute until iteration
+     *
+     * @return self<TKey, TValue>
      */
-    public function map(callable $callback): static
+    public function map(callable $callback): self
     {
         $clone = clone $this;
         $clone->pipes[] = fn($item, $key) => $callback($item, $key);
@@ -69,8 +98,10 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Lazy filter - doesn't execute until iteration
+     *
+     * @return self<TKey, TValue>
      */
-    public function filter(?callable $callback = null): static
+    public function filter(?callable $callback = null): self
     {
         $clone = clone $this;
         $clone->pipes[] = function ($item) use ($callback) {
@@ -84,32 +115,44 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Take first N items
+     *
+     * @return self<TKey, TValue>
      */
-    public function take(int $limit): static
+    public function take(int $limit): self
     {
-        return new static((function () use ($limit) {
+        /** @var \Generator<TKey, TValue> $generator */
+        $generator = (function () use ($limit) {
             $count = 0;
             foreach ($this as $key => $item) {
-                if ($count >= $limit) break;
+                if ($count >= $limit) {
+                    break;
+                }
                 yield $key => $item;
                 $count++;
             }
-        })(), min($limit, $this->count ?? PHP_INT_MAX));
+        })();
+
+        return new self($generator, min($limit, $this->count ?? PHP_INT_MAX));
     }
 
     /**
      * Skip first N items
+     *
+     * @return self<TKey, TValue>
      */
-    public function skip(int $offset): static
+    public function skip(int $offset): self
     {
-        return new static((function () use ($offset) {
+        /** @var \Generator<TKey, TValue> $generator */
+        $generator = (function () use ($offset) {
             $count = 0;
             foreach ($this as $key => $item) {
                 if ($count++ >= $offset) {
                     yield $key => $item;
                 }
             }
-        })(), $this->count !== null ? max(0, $this->count - $offset) : null);
+        })();
+
+        return new self($generator, $this->count !== null ? max(0, $this->count - $offset) : null);
     }
 
     /**
@@ -150,10 +193,13 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Pluck a field from items
+     *
+     * @return self<array-key, mixed>
      */
-    public function pluck(string $field, ?string $keyBy = null): static
+    public function pluck(string $field, ?string $keyBy = null): self
     {
-        return new static((function () use ($field, $keyBy) {
+        /** @var \Generator<array-key, mixed> $generator */
+        $generator = (function () use ($field, $keyBy) {
             foreach ($this as $item) {
                 $value = data_get($item, $field);
                 if ($keyBy !== null) {
@@ -162,11 +208,16 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
                     yield $value;
                 }
             }
-        })(), $this->count);
+        })();
+
+        return new self($generator, $this->count);
     }
 
     /**
      * Key by field
+     *
+     * @param string|callable(TValue): array-key $key
+     * @return array<array-key, TValue>
      */
     public function keyBy(string|callable $key): array
     {
@@ -182,6 +233,9 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Group by field
+     *
+     * @param string|callable(TValue): array-key $key
+     * @return array<array-key, array<int, TValue>>
      */
     public function groupBy(string|callable $key): array
     {
@@ -211,8 +265,10 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Iterate with callback
+     *
+     * @return self<TKey, TValue>
      */
-    public function each(callable $callback): static
+    public function each(callable $callback): self
     {
         foreach ($this as $key => $item) {
             if ($callback($item, $key) === false) {
@@ -272,6 +328,8 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Materialize to array
+     *
+     * @return array<int, TValue>
      */
     public function all(): array
     {
@@ -284,6 +342,8 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
 
     /**
      * Get as Laravel Collection
+     *
+     * @return Collection<int, TValue>
      */
     public function collect(): Collection
     {
@@ -295,21 +355,26 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
      *
      * Note: If count was not provided at construction and must be computed,
      * the computed count is cached to avoid repeated iteration.
+     *
+     * @return int<0, max>
      */
     public function count(): int
     {
         if ($this->count !== null) {
-            return $this->count;
+            return max(0, $this->count);
         }
 
         // Cache the computed count to avoid repeated iteration
         // This is an acceptable side effect for performance
         $this->count = iterator_count($this->getIteratorForCounting());
-        return $this->count;
+
+        return max(0, $this->count);
     }
 
     /**
      * Get a fresh iterator for counting (avoids consuming the main iterator)
+     *
+     * @return \Traversable<TKey, TValue>
      */
     private function getIteratorForCounting(): \Traversable
     {
@@ -340,14 +405,20 @@ class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSerializab
         return !$this->isEmpty();
     }
 
+    /**
+     * @return array<int, mixed>
+     */
     public function toArray(): array
     {
         return array_map(
             fn($item) => $item instanceof Arrayable ? $item->toArray() : $item,
-            $this->all()
+            $this->all(),
         );
     }
 
+    /**
+     * @return array<int, mixed>
+     */
     public function jsonSerialize(): array
     {
         return $this->toArray();

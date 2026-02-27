@@ -11,14 +11,18 @@ use Illuminate\Database\Eloquent\Model;
  * Generic presenter adapter using closures
  * For when you don't want to use a presenter package
  */
-class ClosurePresenterAdapter implements PresenterAdapterInterface
+final class ClosurePresenterAdapter implements PresenterAdapterInterface
 {
+    /** @var array<class-string<Model>, callable(Model): mixed> */
     protected array $presenters = [];
 
     /**
      * Register a presenter closure for a model
+     *
+     * @param class-string<Model> $modelClass
+     * @param callable(Model): mixed $presenter
      */
-    public function register(string $modelClass, callable $presenter): static
+    public function register(string $modelClass, callable $presenter): self
     {
         $this->presenters[$modelClass] = $presenter;
         return $this;
@@ -26,8 +30,10 @@ class ClosurePresenterAdapter implements PresenterAdapterInterface
 
     /**
      * Register multiple presenter closures at once
+     *
+     * @param array<class-string<Model>, callable(Model): mixed> $presenters
      */
-    public function registerMany(array $presenters): static
+    public function registerMany(array $presenters): self
     {
         foreach ($presenters as $modelClass => $presenter) {
             $this->presenters[$modelClass] = $presenter;

@@ -10,11 +10,11 @@ use AdroSoftware\DataProxy\Contracts\PresenterAdapterInterface;
 
 /**
  * Main entry point - the DataProxy
- * 
+ *
  * A GraphQL-like declarative data retrieval layer for Laravel
  * with query batching and optimization.
  */
-class DataProxy
+final class DataProxy
 {
     protected Config $config;
     protected ?CacheAdapterInterface $cache = null;
@@ -26,7 +26,9 @@ class DataProxy
 
         // Auto-configure Laravel cache if enabled
         if ($this->config->get('cache.enabled')) {
-            $this->cache = new LaravelCacheAdapter($this->config->get('cache.store'));
+            /** @var string|null $store */
+            $store = $this->config->get('cache.store');
+            $this->cache = new LaravelCacheAdapter($store);
         }
     }
 
@@ -108,6 +110,8 @@ class DataProxy
 
     /**
      * Update configuration
+     *
+     * @param array<string, mixed>|callable(Config): void $config
      */
     public function configure(array|callable $config): static
     {
@@ -141,7 +145,7 @@ class DataProxy
             $requirements,
             $this->config,
             $this->cache,
-            $this->presenter
+            $this->presenter,
         );
 
         return $resolver->resolve();
