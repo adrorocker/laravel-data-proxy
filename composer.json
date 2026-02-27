@@ -27,7 +27,8 @@
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
-        "adrosoftware/laravel-model-presenter": "^1.0 - For presenter support with the LaravelModelPresenterAdapter"
+        "adrosoftware/laravel-model-presenter": "^1.0 - For presenter support with the LaravelModelPresenterAdapter",
+        "adrosoftware/laravel-data-proxy-boost": "Enables Laravel Boost to automatically optimize and cache Data Proxy queries"
     },
     "autoload": {
         "psr-4": {
