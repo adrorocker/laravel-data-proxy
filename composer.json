@@ -27,7 +27,7 @@
         "phpunit/phpunit": "^11.0"
     },
     "suggest": {
-        "adrosoftware/laravel-model-presenter": "For presenter support with the LaravelModelPresenterAdapter"
+        "adrosoftware/laravel-model-presenter": "^1.0 - For presenter support with the LaravelModelPresenterAdapter"
     },
     "autoload": {
         "psr-4": {
