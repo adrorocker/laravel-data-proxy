@@ -54,28 +54,42 @@ final class LaravelModelPresenterAdapter implements PresenterAdapterInterface
 
     public function present(Model $model, ?string $presenterClass = null): mixed
     {
-        $presenterClass ??= $this->resolvePresenter($model);
+        // If explicit presenter class provided, validate and use it
+        if ($presenterClass !== null) {
+            if (!class_exists($presenterClass)) {
+                throw new \InvalidArgumentException("Presenter class does not exist: {$presenterClass}");
+            }
+            return new $presenterClass($model);
+        }
 
-        if (!$presenterClass) {
+        // Check if model uses the PresentModel trait from adrosoftware/laravel-model-presenter
+        // The trait's present() method takes no arguments and uses the model's $presenter property
+        if (method_exists($model, 'present') && property_exists($model, 'presenter')) {
+            return $model->present();
+        }
+
+        // Try to resolve via mapping or auto-discovery
+        $resolvedClass = $this->resolvePresenter($model);
+
+        if ($resolvedClass === null) {
             return $model;
         }
 
-        // Validate presenter class exists before instantiation
-        if (!class_exists($presenterClass)) {
-            throw new \InvalidArgumentException("Presenter class does not exist: {$presenterClass}");
+        if (!class_exists($resolvedClass)) {
+            throw new \InvalidArgumentException("Presenter class does not exist: {$resolvedClass}");
         }
 
-        // Check if model uses the Presentable trait from the package
-        if (method_exists($model, 'present')) {
-            return $model->present($presenterClass);
-        }
-
-        // Manual presenter instantiation
-        return new $presenterClass($model);
+        // Manual presenter instantiation for models without the trait
+        return new $resolvedClass($model);
     }
 
     public function hasPresenter(Model $model): bool
     {
+        // Check if model uses the PresentModel trait
+        if (method_exists($model, 'present') && property_exists($model, 'presenter')) {
+            return true;
+        }
+
         return $this->resolvePresenter($model) !== null;
     }
 

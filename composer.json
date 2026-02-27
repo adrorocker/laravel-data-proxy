@@ -16,6 +16,7 @@
         "illuminate/cache": "^10.0|^11.0|^12.0"
     },
     "require-dev": {
+        "adrosoftware/laravel-model-presenter": "^1.0",
         "larastan/larastan": "^3.9",
         "laravel/pint": "^1.27",
         "mockery/mockery": "^1.6",
