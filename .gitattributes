@@ -3,7 +3,9 @@
 
 # Exclude files from export (composer --prefer-dist)
 /.gitattributes export-ignore
+/.github export-ignore
 /.gitignore export-ignore
+/docs export-ignore
+/phpstan.neon export-ignore
 /phpunit.xml export-ignore
 /tests export-ignore
-/docs export-ignore
