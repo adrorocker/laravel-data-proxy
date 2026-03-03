@@ -29,6 +29,9 @@ final class Shape
     protected ?string $presenter = null;
     protected bool $asArray = false;
 
+    /** @var callable|null */
+    protected $hydrate = null;
+
     public static function make(): self
     {
         return new self();
@@ -322,5 +325,20 @@ final class Shape
     public function shouldReturnArray(): bool
     {
         return $this->asArray;
+    }
+
+    /**
+     * Register a hydration callback to batch-load data after query execution.
+     * Callback receives (Collection $items, array $resolved) and should mutate items in place.
+     */
+    public function hydrate(callable $callback): self
+    {
+        $this->hydrate = $callback;
+        return $this;
+    }
+
+    public function getHydrate(): ?callable
+    {
+        return $this->hydrate;
     }
 }

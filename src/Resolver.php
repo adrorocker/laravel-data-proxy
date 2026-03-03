@@ -321,6 +321,10 @@ class Resolver
                 $page = $queryDef['page'] ?? null;
                 $result = $query->paginate($perPage, ['*'], 'page', $page);
                 $this->resolved[$alias] = new PaginatedResult($result);
+                if ($hydrate = $shape->getHydrate()) {
+                    $items = $result->getCollection();
+                    $hydrate($items, $this->resolved);
+                }
             } else {
                 if ($limit = $shape->getLimit()) {
                     $query->limit($limit);
