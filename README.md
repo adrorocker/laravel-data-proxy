@@ -146,9 +146,39 @@ Shape::make()
     ->limit(10)
     ->offset(20)
 
+    // Custom query scopes (accumulate - multiple calls are supported)
+    ->scope(fn($query) => $query->withCount('likes'))
+    ->scope(fn($query, $resolved) => $query->whereIn('author_id', $resolved['followedIds']))
+
     // Output format
     ->asArray()  // Return arrays instead of models
     ->present(PostPresenter::class)  // Apply presenter
+```
+
+### Custom Query Scopes
+
+Apply custom query modifications using scopes. Multiple scopes accumulate and are applied in order:
+
+```php
+Shape::make()
+    // First scope - add aggregates
+    ->scope(fn($query) => $query->withCount('likes'))
+
+    // Second scope - add visibility constraints
+    ->scope(fn($query, $resolved) => $query->whereIn('author_id', $resolved['followedIds']))
+
+    // Conditional scope using when()
+    ->when($excludeIds, fn($shape) => $shape->scope(
+        fn($query) => $query->whereNotIn('id', $excludeIds)
+    ))
+```
+
+Scopes receive `($query, $resolved)` parameters where `$resolved` contains all previously resolved requirements.
+
+To inspect or clear scopes:
+```php
+$shape->getScopes();    // Returns array of callables
+$shape->clearScopes();  // Removes all scopes
 ```
 
 ### Result
