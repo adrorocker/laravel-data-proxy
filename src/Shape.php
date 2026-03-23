@@ -24,8 +24,8 @@ final class Shape
     /** @var array<int, array{0: string, 1: string}> */
     protected array $orderBy = [];
 
-    /** @var callable|null */
-    protected $scope = null;
+    /** @var array<int, callable> */
+    protected array $scopes = [];
     protected ?string $presenter = null;
     protected bool $asArray = false;
 
@@ -183,11 +183,22 @@ final class Shape
     }
 
     /**
-     * Apply a custom query scope
+     * Apply a custom query scope. Multiple scopes accumulate and are applied in order.
      */
     public function scope(callable $scope): self
     {
-        $this->scope = $scope;
+        $this->scopes[] = $scope;
+
+        return $this;
+    }
+
+    /**
+     * Remove all scopes from the shape.
+     */
+    public function clearScopes(): self
+    {
+        $this->scopes = [];
+
         return $this;
     }
 
@@ -312,9 +323,33 @@ final class Shape
         return $this->orderBy;
     }
 
+    /**
+     * Get all scopes as a single merged callable.
+     * Returns null if no scopes are defined.
+     */
     public function getScope(): ?callable
     {
-        return $this->scope;
+        if (empty($this->scopes)) {
+            return null;
+        }
+
+        $scopes = $this->scopes;
+
+        return function ($query, array $resolved = []) use ($scopes) {
+            foreach ($scopes as $scope) {
+                $scope($query, $resolved);
+            }
+        };
+    }
+
+    /**
+     * Get all scopes as an array.
+     *
+     * @return array<int, callable>
+     */
+    public function getScopes(): array
+    {
+        return $this->scopes;
     }
 
     public function getPresenter(): ?string
