@@ -201,7 +201,7 @@ class Resolver
             $allRelations = array_merge($allRelations, $this->extractRelations($shape));
         }
 
-        $allIds = array_values(array_unique(array_filter($allIds)));
+        $allIds = array_values(array_unique(array_filter($allIds), SORT_REGULAR));
         $allRelations = array_unique($allRelations);
 
         if (empty($allIds)) {
