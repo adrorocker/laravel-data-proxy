@@ -21,6 +21,7 @@ final class Config
             'chunk_size' => 1000,
             'max_eager_load_depth' => 5,
             'timeout' => null,
+            'merge_shared_eager_loads' => false,
         ],
         'memory' => [
             'max_mb' => 128,
@@ -43,6 +44,14 @@ final class Config
     protected array $config;
 
     /**
+     * Memoized resolutions for dot-notation keys to avoid re-walking
+     * the nested config array on every `get()`.
+     *
+     * @var array<string, mixed>
+     */
+    protected array $resolved = [];
+
+    /**
      * @param array<string, mixed> $config
      */
     public function __construct(array $config = [])
@@ -52,17 +61,19 @@ final class Config
 
     public function get(string $key, mixed $default = null): mixed
     {
-        $keys = explode('.', $key);
-        $value = $this->config;
+        if (array_key_exists($key, $this->resolved)) {
+            return $this->resolved[$key];
+        }
 
-        foreach ($keys as $k) {
+        $value = $this->config;
+        foreach (explode('.', $key) as $k) {
             if (!is_array($value) || !array_key_exists($k, $value)) {
                 return $default;
             }
             $value = $value[$k];
         }
 
-        return $value;
+        return $this->resolved[$key] = $value;
     }
 
     public function set(string $key, mixed $value): self
@@ -83,6 +94,8 @@ final class Config
             }
         }
 
+        $this->resolved = [];
+
         return $this;
     }
 
@@ -100,6 +113,7 @@ final class Config
     public function merge(array $config): self
     {
         $this->config = array_replace_recursive($this->config, $config);
+        $this->resolved = [];
         return $this;
     }
 }

@@ -30,6 +30,12 @@ return [
         'chunk_size' => 1000,
         'max_eager_load_depth' => 5,
         'timeout' => null, // seconds, null for no timeout
+        // When two batched entities request the same relation with different
+        // shapes (e.g. ->with('posts', limit 5) vs ->with('posts', limit 10)),
+        // the default behavior is last-write-wins. Set this to true to merge
+        // them (union of fields and constraints, max of limits) so each alias
+        // gets at least the data it asked for.
+        'merge_shared_eager_loads' => env('DATAPROXY_MERGE_SHARED_EAGER_LOADS', false),
     ],
 
     /*

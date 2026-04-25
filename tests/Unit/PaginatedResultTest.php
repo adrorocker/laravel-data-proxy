@@ -221,4 +221,12 @@ class PaginatedResultTest extends TestCase
         $this->assertTrue($result->onLastPage());
         $this->assertFalse($result->hasMorePages());
     }
+
+    public function test_items_returns_same_dataset_on_repeated_calls(): void
+    {
+        $paginator = $this->createPaginator([1, 2, 3], 10, 3);
+        $result = new PaginatedResult($paginator);
+
+        $this->assertSame($result->items(), $result->items());
+    }
 }

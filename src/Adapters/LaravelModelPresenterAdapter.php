@@ -16,7 +16,7 @@ final class LaravelModelPresenterAdapter implements PresenterAdapterInterface
     protected string $namespace;
     protected string $suffix;
 
-    /** @var array<class-string<Model>, class-string> */
+    /** @var array<class-string<Model>, class-string|false> */
     protected array $map = [];
 
     public function __construct(
@@ -97,8 +97,9 @@ final class LaravelModelPresenterAdapter implements PresenterAdapterInterface
     {
         $modelClass = get_class($model);
 
-        if (isset($this->map[$modelClass])) {
-            return $this->map[$modelClass];
+        if (array_key_exists($modelClass, $this->map)) {
+            $cached = $this->map[$modelClass];
+            return $cached === false ? null : $cached;
         }
 
         // Auto-discover: App\Models\User -> App\Presenters\UserPresenter
@@ -110,6 +111,8 @@ final class LaravelModelPresenterAdapter implements PresenterAdapterInterface
             return $presenterClass;
         }
 
+        // Cache the miss so we don't re-run class_exists() on every call.
+        $this->map[$modelClass] = false;
         return null;
     }
 

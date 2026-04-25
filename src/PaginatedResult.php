@@ -23,6 +23,12 @@ final class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggr
     /** @var LengthAwarePaginator<int, TValue> */
     protected LengthAwarePaginator $paginator;
 
+    /** @var array<int, TValue>|null */
+    private ?array $cachedItems = null;
+
+    /** @var DataSet<int, TValue>|null */
+    private ?DataSet $cachedDataSet = null;
+
     /**
      * @param LengthAwarePaginator<int, TValue> $paginator
      */
@@ -38,7 +44,16 @@ final class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggr
      */
     public function items(): DataSet
     {
-        return new DataSet($this->paginator->items(), count($this->paginator->items()));
+        if ($this->cachedDataSet !== null) {
+            return $this->cachedDataSet;
+        }
+
+        $this->cachedItems ??= $this->paginator->items();
+
+        /** @var DataSet<int, TValue> $ds */
+        $ds = new DataSet($this->cachedItems, count($this->cachedItems));
+
+        return $this->cachedDataSet = $ds;
     }
 
     /**
@@ -117,7 +132,7 @@ final class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggr
 
     public function count(): int
     {
-        return count($this->paginator->items());
+        return count($this->cachedItems ??= $this->paginator->items());
     }
 
     /**
@@ -125,8 +140,10 @@ final class PaginatedResult implements Arrayable, JsonSerializable, IteratorAggr
      */
     public function toArray(): array
     {
+        $items = $this->cachedItems ??= $this->paginator->items();
+
         return [
-            'data' => collect($this->paginator->items())->map(
+            'data' => collect($items)->map(
                 fn($item) => $item instanceof Arrayable ? $item->toArray() : $item,
             )->all(),
             'pagination' => [

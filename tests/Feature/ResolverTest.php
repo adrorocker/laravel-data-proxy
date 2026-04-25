@@ -609,4 +609,126 @@ class ResolverTest extends TestCase
 
         $this->assertEquals(1, $result->metrics()['batch_savings']);
     }
+
+    // ========== Performance invariants ==========
+
+    public function test_aggregates_with_distinct_constraints_group_into_one_query_per_signature(): void
+    {
+        User::create(['name' => 'A1', 'email' => 'a1@example.com', 'age' => 25]);
+        User::create(['name' => 'A2', 'email' => 'a2@example.com', 'age' => 30]);
+        User::create(['name' => 'C1', 'email' => 'c1@example.com', 'age' => 10]);
+
+        // Two pairs of aggregates over User: one unconstrained, one filtered.
+        // Each pair shares constraints → should batch to 1 query per pair = 2 total.
+        $requirements = Requirements::make()
+            ->count('total', User::class)
+            ->sum('totalAge', User::class, 'age')
+            ->count('adults', User::class, Shape::make()->where('age', '>=', 18))
+            ->sum('adultAge', User::class, 'age', Shape::make()->where('age', '>=', 18));
+
+        $result = $this->createResolver($requirements)->resolve();
+
+        $this->assertSame(2, $result->metrics()['queries']);
+        $this->assertSame(3, $result->get('total'));
+        $this->assertSame(65, $result->get('totalAge'));
+        $this->assertSame(2, $result->get('adults'));
+        $this->assertSame(55, $result->get('adultAge'));
+    }
+
+    public function test_aggregates_with_callable_constraints_batch_when_resolved_values_match(): void
+    {
+        User::create(['name' => 'A1', 'email' => 'a1@example.com', 'age' => 25]);
+        User::create(['name' => 'A2', 'email' => 'a2@example.com', 'age' => 30]);
+        User::create(['name' => 'C', 'email' => 'c@example.com', 'age' => 10]);
+
+        // Both aggregates use the same callable-resolved value (18). They should batch.
+        $minAge = fn() => 18;
+
+        $requirements = Requirements::make()
+            ->count('adults', User::class, Shape::make()->where('age', '>=', $minAge))
+            ->sum('adultAge', User::class, 'age', Shape::make()->where('age', '>=', $minAge));
+
+        $result = $this->createResolver($requirements)->resolve();
+
+        $this->assertSame(1, $result->metrics()['queries']);
+        $this->assertSame(2, $result->get('adults'));
+        $this->assertSame(55, $result->get('adultAge'));
+    }
+
+    public function test_aggregates_with_wherehas_callback_do_not_falsely_batch(): void
+    {
+        $u = User::create(['name' => 'U', 'email' => 'u@example.com']);
+        Post::create(['user_id' => $u->id, 'title' => 'P', 'published' => true]);
+
+        // Both have whereHas callbacks; signatures must differ → 2 single queries (not 1 batched).
+        $requirements = Requirements::make()
+            ->count('aHas', User::class, Shape::make()->whereHas('posts', fn($q) => $q->where('published', true)))
+            ->count('bHas', User::class, Shape::make()->whereHas('posts', fn($q) => $q->where('published', false)));
+
+        $result = $this->createResolver($requirements)->resolve();
+
+        $this->assertSame(2, $result->metrics()['queries']);
+    }
+
+    public function test_callable_id_in_one_resolved_only_once(): void
+    {
+        $user = User::create(['name' => 'Once', 'email' => 'once@example.com']);
+
+        $invocations = 0;
+        $requirements = Requirements::make()
+            ->one('user', User::class, function () use ($user, &$invocations) {
+                $invocations++;
+                return $user->id;
+            });
+
+        $result = $this->createResolver($requirements)->resolve();
+
+        $this->assertSame(1, $invocations);
+        $this->assertSame('Once', $result->get('user')->name);
+    }
+
+    public function test_callable_ids_in_many_resolved_only_once(): void
+    {
+        $u1 = User::create(['name' => 'One', 'email' => 'one@example.com']);
+        $u2 = User::create(['name' => 'Two', 'email' => 'two@example.com']);
+
+        $invocations = 0;
+        $requirements = Requirements::make()
+            ->many('users', User::class, function () use ($u1, $u2, &$invocations) {
+                $invocations++;
+                return [$u1->id, $u2->id];
+            });
+
+        $this->createResolver($requirements)->resolve();
+
+        $this->assertSame(1, $invocations);
+    }
+
+    public function test_eager_load_merge_flag_unions_constraints_for_shared_relations(): void
+    {
+        $u1 = User::create(['name' => 'Author1', 'email' => 'a1@example.com']);
+        $u2 = User::create(['name' => 'Author2', 'email' => 'a2@example.com']);
+        Post::create(['user_id' => $u1->id, 'title' => 'Old', 'published' => true]);
+        Post::create(['user_id' => $u1->id, 'title' => 'Draft', 'published' => false]);
+        Post::create(['user_id' => $u2->id, 'title' => 'New', 'published' => true]);
+
+        // Two batched aliases asking for the same relation with different shapes.
+        // With merge_shared_eager_loads = true both WHERE clauses are applied
+        // to the eager load: posts must be both published AND titled 'Old'.
+        $requirements = Requirements::make()
+            ->one('a', User::class, $u1->id, Shape::make()->with('posts', Shape::make()->where('published', true)))
+            ->one('b', User::class, $u2->id, Shape::make()->with('posts', Shape::make()->where('title', 'Old')));
+
+        $result = $this->createResolver($requirements, [
+            'query' => ['merge_shared_eager_loads' => true],
+        ])->resolve();
+
+        // a's posts: published AND title='Old' → just the 'Old' post
+        $aPosts = $result->get('a')->posts;
+        $this->assertCount(1, $aPosts);
+        $this->assertSame('Old', $aPosts->first()->title);
+
+        // b's posts: published AND title='Old' → no post (since u2 only has 'New')
+        $this->assertCount(0, $result->get('b')->posts);
+    }
 }

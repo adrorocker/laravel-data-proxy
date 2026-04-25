@@ -30,6 +30,12 @@ class Resolver
         'batch_savings' => 0,
     ];
 
+    /** @var array<class-string<Model>, true> */
+    protected static array $validatedModels = [];
+
+    /** @var array<class-string<Model>, string> */
+    protected static array $primaryKeyCache = [];
+
     public function __construct(
         Requirements $requirements,
         Config $config,
@@ -181,28 +187,36 @@ class Resolver
         // Validate model class
         $this->validateModelClass($modelClass);
 
-        // Collect all IDs and relations
+        // Collect all IDs and detect relations in a single pass.
+        // Resolved IDs are cached on the entity record so we don't re-invoke
+        // user-provided callables in the distribution loop below.
         $allIds = [];
-        $allRelations = [];
+        $hasRelations = false;
 
         foreach ($entities as $alias => $entity) {
+            /** @var Shape $shape */
+            $shape = $entity['shape'];
+
             if ($entity['type'] === 'one') {
                 $id = $this->resolveValue($entity['id']);
+                $entities[$alias]['_resolvedId'] = $id;
                 if ($id !== null) {
                     $allIds[] = $id;
                 }
             } else {
                 $ids = (array) $this->resolveValue($entity['ids']);
-                $allIds = array_merge($allIds, $ids);
+                $entities[$alias]['_resolvedIds'] = $ids;
+                foreach ($ids as $id) {
+                    $allIds[] = $id;
+                }
             }
 
-            /** @var Shape $shape */
-            $shape = $entity['shape'];
-            $allRelations = array_merge($allRelations, $this->extractRelations($shape));
+            if (!$hasRelations && !empty($shape->getRelations())) {
+                $hasRelations = true;
+            }
         }
 
         $allIds = array_values(array_unique(array_filter($allIds), SORT_REGULAR));
-        $allRelations = array_unique($allRelations);
 
         if (empty($allIds)) {
             foreach ($entities as $alias => $entity) {
@@ -212,44 +226,40 @@ class Resolver
         }
 
         // Build single query
-        $primaryKey = (new $modelClass())->getKeyName();
+        $primaryKey = $this->primaryKeyFor($modelClass);
         $query = $modelClass::whereIn($primaryKey, $allIds);
 
         // Collect fields (union of all)
         $allFields = $this->collectFields($entities);
         if ($allFields !== ['*']) {
-            // Always include primary key
-            if (!in_array($primaryKey, $allFields)) {
-                array_unshift($allFields, $primaryKey);
-            }
-            $query->select($allFields);
+            array_unshift($allFields, $primaryKey);
+            $query->select(array_values(array_unique($allFields)));
         }
 
         // Eager load relations with their shapes
-        if (!empty($allRelations)) {
-            $eagerLoads = $this->buildEagerLoads($entities);
-            $query->with($eagerLoads);
+        if ($hasRelations) {
+            $query->with($this->buildEagerLoads($entities));
         }
 
         $results = $query->get()->keyBy($primaryKey);
         $this->metrics['queries']++;
         $this->metrics['batch_savings'] += count($entities) - 1;
 
-        // Distribute to aliases
+        // Distribute to aliases (using IDs already resolved above)
         foreach ($entities as $alias => $entity) {
             /** @var Shape $shape */
             $shape = $entity['shape'];
 
             if ($entity['type'] === 'one') {
-                $id = $this->resolveValue($entity['id']);
                 /** @var int|string|null $resolvedId */
-                $resolvedId = $id;
+                $resolvedId = $entity['_resolvedId'];
                 $model = $results->get($resolvedId);
                 $this->resolved[$alias] = $shape->shouldReturnArray() && $model
                     ? $model->toArray()
                     : $model;
             } else {
-                $ids = (array) $this->resolveValue($entity['ids']);
+                /** @var array<int, mixed> $ids */
+                $ids = $entity['_resolvedIds'];
                 $items = collect($ids)
                     ->map(function (mixed $id) use ($results): ?Model {
                         if (!is_int($id) && !is_string($id)) {
@@ -287,16 +297,12 @@ class Resolver
             // Select fields
             $fields = $shape->getFields();
             if ($fields !== ['*']) {
-                $primaryKey = (new $modelClass())->getKeyName();
-                if (!in_array($primaryKey, $fields)) {
-                    array_unshift($fields, $primaryKey);
-                }
-                $query->select($fields);
+                array_unshift($fields, $this->primaryKeyFor($modelClass));
+                $query->select(array_values(array_unique($fields)));
             }
 
             // Eager load
-            $relations = $this->extractRelations($shape);
-            if (!empty($relations)) {
+            if (!empty($shape->getRelations())) {
                 $query->with($this->buildEagerLoadForShape($shape));
             }
 
@@ -352,7 +358,7 @@ class Resolver
         /** @var array<class-string<Model>, array<string, array<string, mixed>>> $byModel */
         $byModel = [];
 
-        // Group by model for potential batching
+        // Group by model first
         foreach ($aggregates as $alias => $agg) {
             if (isset($this->resolved[$alias])) {
                 continue;
@@ -364,36 +370,73 @@ class Resolver
             $byModel[$model][$alias] = $agg;
         }
 
+        // Within each model, sub-group by constraint signature so aggregates
+        // sharing the same WHERE clauses collapse into one query.
         foreach ($byModel as $modelClass => $modelAggs) {
-            // Check if all have same constraints (batchable)
-            if ($this->canBatchAggregates($modelAggs)) {
-                $this->batchResolveAggregates($modelClass, $modelAggs);
-            } else {
-                foreach ($modelAggs as $alias => $agg) {
-                    $this->resolveSingleAggregate($alias, $agg);
+            /** @var array<string, array<string, array<string, mixed>>> $groups */
+            $groups = [];
+            foreach ($modelAggs as $alias => $agg) {
+                /** @var Shape $shape */
+                $shape = $agg['shape'];
+                $sig = $this->constraintSignature($shape->getConstraints());
+                $groups[$sig][$alias] = $agg;
+            }
+
+            foreach ($groups as $group) {
+                if (count($group) > 1) {
+                    $this->batchResolveAggregates($modelClass, $group);
+                } else {
+                    foreach ($group as $alias => $agg) {
+                        $this->resolveSingleAggregate($alias, $agg);
+                    }
                 }
             }
         }
     }
 
     /**
-     * @param array<string, array<string, mixed>> $aggregates
+     * Build a stable signature for a set of constraints so aggregates
+     * with identical filters can be grouped into one SELECT.
+     *
+     * Callable values are pre-resolved against the current `$resolved` state
+     * so closures that produce the same value get grouped together.
+     * Constraints whose payload is itself a closure (whereHas / whereDoesntHave
+     * callbacks, raw SQL with closure bindings) are given a unique signature
+     * so they always fall through to the single-aggregate path — closures
+     * cannot be safely compared for equivalence.
+     *
+     * @param array<int, array<string, mixed>> $constraints
      */
-    protected function canBatchAggregates(array $aggregates): bool
+    protected function constraintSignature(array $constraints): string
     {
-        /** @var array<int, array<string, mixed>>|null $first */
-        $first = null;
-        foreach ($aggregates as $agg) {
-            /** @var Shape $shape */
-            $shape = $agg['shape'];
-            $constraints = $shape->getConstraints();
-            if ($first === null) {
-                $first = $constraints;
-            } elseif ($constraints !== $first) {
-                return false;
-            }
+        if (empty($constraints)) {
+            return 'none';
         }
-        return count($aggregates) > 1;
+
+        $normalized = [];
+        foreach ($constraints as $c) {
+            $type = $c['type'] ?? null;
+
+            // Closure-payload constraints: never batch. Two closures may
+            // produce identical SQL but we cannot prove it, so each gets a
+            // unique signature derived from the closure's own object id.
+            if (($type === 'has' || $type === 'doesntHave')
+                && isset($c['callback']) && is_object($c['callback'])
+            ) {
+                return 'unbatchable:' . spl_object_id($c['callback']);
+            }
+
+            $row = $c;
+            if (array_key_exists('value', $row) && $this->isDeferredValue($row['value'])) {
+                $row['value'] = $this->resolveValue($row['value']);
+            }
+            if (array_key_exists('values', $row) && $this->isDeferredValue($row['values'])) {
+                $row['values'] = $this->resolveValue($row['values']);
+            }
+            $normalized[] = $row;
+        }
+
+        return md5(serialize($normalized));
     }
 
     /**
@@ -576,40 +619,238 @@ class Resolver
     }
 
     /**
-     * @return array<int, string>
-     */
-    protected function extractRelations(Shape $shape): array
-    {
-        $relations = [];
-
-        foreach ($shape->getRelations() as $relation => $nestedShape) {
-            $relations[] = $relation;
-
-            if ($nestedShape instanceof Shape) {
-                foreach ($this->extractRelations($nestedShape) as $nested) {
-                    $relations[] = "{$relation}.{$nested}";
-                }
-            }
-        }
-
-        return $relations;
-    }
-
-    /**
      * @param array<string, array<string, mixed>> $entities
      * @return array<int|string, \Closure|string>
      */
     protected function buildEagerLoads(array $entities): array
     {
+        if ($this->config->get('query.merge_shared_eager_loads')) {
+            return $this->buildMergedEagerLoads($entities);
+        }
+
         $loads = [];
 
         foreach ($entities as $entity) {
             /** @var Shape $shape */
             $shape = $entity['shape'];
-            $loads = array_merge($loads, $this->buildEagerLoadForShape($shape));
+            foreach ($this->buildEagerLoadForShape($shape) as $key => $value) {
+                // Last-write-wins for shared relation keys (preserves prior behavior).
+                if (is_int($key)) {
+                    $loads[] = $value;
+                } else {
+                    $loads[$key] = $value;
+                }
+            }
         }
 
         return $loads;
+    }
+
+    /**
+     * Build eager loads where shared relation keys are merged across entities
+     * instead of overwriting each other. Only invoked when the
+     * `query.merge_shared_eager_loads` config flag is true.
+     *
+     * @param array<string, array<string, mixed>> $entities
+     * @return array<int|string, \Closure|string>
+     */
+    protected function buildMergedEagerLoads(array $entities): array
+    {
+        /** @var array<string, Shape> $merged */
+        $merged = [];
+        /** @var array<string, callable> $callables */
+        $callables = [];
+        /** @var array<int, string> $bareRelations */
+        $bareRelations = [];
+
+        foreach ($entities as $entity) {
+            /** @var Shape $shape */
+            $shape = $entity['shape'];
+            foreach ($shape->getRelations() as $relation => $nested) {
+                if ($nested instanceof Shape) {
+                    $merged[$relation] = isset($merged[$relation])
+                        ? $this->mergeShapes($merged[$relation], $nested)
+                        : $nested;
+                } elseif (is_callable($nested)) {
+                    // Callable nested loads can't be safely merged; last write wins.
+                    $callables[$relation] = $nested;
+                } else {
+                    $bareRelations[] = $relation;
+                }
+            }
+        }
+
+        $loads = [];
+        foreach ($bareRelations as $relation) {
+            $loads[] = $relation;
+        }
+        foreach ($callables as $relation => $cb) {
+            $loads[$relation] = \Closure::fromCallable($cb);
+        }
+        foreach ($merged as $relation => $shape) {
+            $loads[$relation] = $this->makeRelationClosure($shape);
+        }
+
+        return $loads;
+    }
+
+    /**
+     * Merge two Shape instances representing the same relation: union of fields
+     * (any '*' wins), concatenated constraints, max of limits, max of offsets,
+     * concatenated orderBy, and recursive merge of nested relations.
+     */
+    protected function mergeShapes(Shape $a, Shape $b): Shape
+    {
+        $merged = Shape::make();
+
+        // Fields: '*' is the absorbing element.
+        $aFields = $a->getFields();
+        $bFields = $b->getFields();
+        if ($aFields === ['*'] || $bFields === ['*']) {
+            // Default already '*'; nothing to do.
+        } else {
+            $seen = [];
+            foreach ($aFields as $f) {
+                $seen[$f] = true;
+            }
+            foreach ($bFields as $f) {
+                $seen[$f] = true;
+            }
+            $merged->select(array_keys($seen));
+        }
+
+        foreach ($a->getConstraints() as $c) {
+            $this->appendRawConstraint($merged, $c);
+        }
+        foreach ($b->getConstraints() as $c) {
+            $this->appendRawConstraint($merged, $c);
+        }
+
+        foreach ($a->getOrderBy() as [$col, $dir]) {
+            $merged->orderBy($col, $dir);
+        }
+        foreach ($b->getOrderBy() as [$col, $dir]) {
+            $merged->orderBy($col, $dir);
+        }
+
+        $aLimit = $a->getLimit();
+        $bLimit = $b->getLimit();
+        if ($aLimit !== null || $bLimit !== null) {
+            $merged->limit(max($aLimit ?? 0, $bLimit ?? 0));
+        }
+
+        // Recursively merge nested relations.
+        foreach ($a->getRelations() as $rel => $nested) {
+            $merged->with($rel, $nested);
+        }
+        foreach ($b->getRelations() as $rel => $nested) {
+            $existing = $merged->getRelations()[$rel] ?? null;
+            if ($existing instanceof Shape && $nested instanceof Shape) {
+                $merged->with($rel, $this->mergeShapes($existing, $nested));
+            } else {
+                $merged->with($rel, $nested);
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * Append a raw constraint array to a Shape via its public API so the
+     * normalized internal representation stays consistent.
+     *
+     * @param array<string, mixed> $c
+     */
+    protected function appendRawConstraint(Shape $shape, array $c): void
+    {
+        switch ($c['type'] ?? null) {
+            case 'basic':
+                /** @var string $column */
+                $column = $c['column'];
+                /** @var string $operator */
+                $operator = $c['operator'];
+                $shape->where($column, $operator, $c['value']);
+                break;
+            case 'in':
+                /** @var string $column */
+                $column = $c['column'];
+                /** @var array<int, mixed>|callable $values */
+                $values = $c['values'];
+                $shape->whereIn($column, $values);
+                break;
+            case 'notIn':
+                /** @var string $column */
+                $column = $c['column'];
+                /** @var array<int, mixed> $values */
+                $values = $c['values'];
+                $shape->whereNotIn($column, $values);
+                break;
+            case 'between':
+                /** @var string $column */
+                $column = $c['column'];
+                /** @var array{0: mixed, 1: mixed} $range */
+                $range = $c['range'];
+                $shape->whereBetween($column, $range);
+                break;
+            case 'null':
+                /** @var string $column */
+                $column = $c['column'];
+                $shape->whereNull($column);
+                break;
+            case 'notNull':
+                /** @var string $column */
+                $column = $c['column'];
+                $shape->whereNotNull($column);
+                break;
+            case 'has':
+                /** @var string $relation */
+                $relation = $c['relation'];
+                /** @var callable|null $callback */
+                $callback = $c['callback'] ?? null;
+                $shape->whereHas($relation, $callback);
+                break;
+            case 'doesntHave':
+                /** @var string $relation */
+                $relation = $c['relation'];
+                /** @var callable|null $callback */
+                $callback = $c['callback'] ?? null;
+                $shape->whereDoesntHave($relation, $callback);
+                break;
+            case 'raw':
+                /** @var string $sql */
+                $sql = $c['sql'];
+                /** @var array<int, mixed> $bindings */
+                $bindings = $c['bindings'] ?? [];
+                $shape->whereRaw($sql, $bindings);
+                break;
+        }
+    }
+
+    /**
+     * Build the eager-load closure for a single (already-merged) Shape.
+     */
+    protected function makeRelationClosure(Shape $shape): \Closure
+    {
+        return function ($query) use ($shape): void {
+            $fields = $shape->getFields();
+            if ($fields !== ['*']) {
+                $query->select($fields);
+            }
+
+            $this->applyConstraints($query, $shape->getConstraints());
+
+            foreach ($shape->getOrderBy() as [$col, $dir]) {
+                $query->orderBy($col, $dir);
+            }
+
+            if ($limit = $shape->getLimit()) {
+                $query->limit($limit);
+            }
+
+            if (!empty($shape->getRelations())) {
+                $query->with($this->buildEagerLoadForShape($shape));
+            }
+        };
     }
 
     /**
@@ -659,7 +900,7 @@ class Resolver
      */
     protected function collectFields(array $entities): array
     {
-        $fields = [];
+        $seen = [];
 
         foreach ($entities as $entity) {
             /** @var Shape $shape */
@@ -668,10 +909,12 @@ class Resolver
             if ($shapeFields === ['*']) {
                 return ['*'];
             }
-            $fields = array_merge($fields, $shapeFields);
+            foreach ($shapeFields as $field) {
+                $seen[$field] = true;
+            }
         }
 
-        return array_values(array_unique($fields));
+        return array_keys($seen);
     }
 
     /**
@@ -751,18 +994,48 @@ class Resolver
         }
     }
 
+    /**
+     * Invoke deferred values (Closures or invokable objects) against the
+     * currently-resolved data. String / array values that happen to coincide
+     * with PHP function names are NOT treated as callables — those are
+     * legitimate constraint values (e.g. `where('title', 'Old')` should not
+     * accidentally call a `old()` helper).
+     */
     protected function resolveValue(mixed $value): mixed
     {
-        return is_callable($value) ? $value($this->resolved) : $value;
+        if (!$this->isDeferredValue($value)) {
+            return $value;
+        }
+
+        /** @var callable(array<string, mixed>): mixed $value */
+        return $value($this->resolved);
     }
 
     /**
-     * Validate that a model class exists and extends Eloquent Model
+     * True if the value is a deferred Closure or invokable object that should
+     * be invoked against the current resolution state. Strings/arrays that
+     * happen to coincide with PHP function names are NOT deferred values —
+     * `where('title', 'Old')` must remain a literal string compare.
+     */
+    protected function isDeferredValue(mixed $value): bool
+    {
+        return $value instanceof \Closure
+            || (is_object($value) && method_exists($value, '__invoke'));
+    }
+
+    /**
+     * Validate that a model class exists and extends Eloquent Model.
+     * Successful validations are memoized for the lifetime of the process
+     * since classes don't change between requirements.
      *
      * @throws \InvalidArgumentException if model class is invalid
      */
     protected function validateModelClass(string $modelClass): void
     {
+        if (isset(self::$validatedModels[$modelClass])) {
+            return;
+        }
+
         if (!class_exists($modelClass)) {
             throw new \InvalidArgumentException("Model class does not exist: {$modelClass}");
         }
@@ -770,5 +1043,18 @@ class Resolver
         if (!is_subclass_of($modelClass, Model::class)) {
             throw new \InvalidArgumentException("Class is not an Eloquent Model: {$modelClass}");
         }
+
+        self::$validatedModels[$modelClass] = true;
+    }
+
+    /**
+     * Resolve and memoize the primary key for a model class.
+     * Avoids instantiating the model on every batch.
+     *
+     * @param class-string<Model> $modelClass
+     */
+    protected function primaryKeyFor(string $modelClass): string
+    {
+        return self::$primaryKeyCache[$modelClass] ??= (new $modelClass())->getKeyName();
     }
 }

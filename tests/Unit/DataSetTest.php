@@ -196,4 +196,53 @@ class DataSetTest extends TestCase
 
         $this->assertEquals('[1,2,3]', json_encode($dataset));
     }
+
+    public function test_repeated_count_on_generator_dataset_does_not_re_iterate(): void
+    {
+        $invocations = 0;
+        $generator = (function () use (&$invocations) {
+            foreach ([1, 2, 3, 4] as $v) {
+                $invocations++;
+                yield $v;
+            }
+        })();
+
+        $dataset = new DataSet($generator);
+
+        $this->assertEquals(4, $dataset->count());
+        // Second call must hit the cached count (and any internal materialization)
+        // — the generator should not be advanced again.
+        $this->assertEquals(4, $dataset->count());
+        $this->assertEquals(4, $invocations);
+    }
+
+    public function test_repeated_all_on_array_dataset_returns_same_materialized_array(): void
+    {
+        $dataset = new DataSet([1, 2, 3]);
+
+        $first = $dataset->all();
+        $second = $dataset->all();
+
+        $this->assertEquals([1, 2, 3], $first);
+        $this->assertSame($first, $second);
+    }
+
+    public function test_take_does_not_materialize_parent_dataset(): void
+    {
+        $invocations = 0;
+        $generator = (function () use (&$invocations) {
+            foreach (range(1, 1000) as $v) {
+                $invocations++;
+                yield $v;
+            }
+        })();
+
+        $dataset = new DataSet($generator);
+        $first2 = $dataset->take(2)->all();
+
+        $this->assertEquals([1, 2], $first2);
+        // Take must remain lazy: it must never materialize the entire 1000-item
+        // source. A small over-pull from generator semantics is acceptable.
+        $this->assertLessThan(10, $invocations);
+    }
 }

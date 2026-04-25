@@ -17,6 +17,8 @@ class LaravelCacheAdapter implements CacheAdapterInterface
     /** @var array<int, string> */
     protected array $tags = [];
 
+    protected ?\Illuminate\Contracts\Cache\Repository $repo = null;
+
     public function __construct(?string $store = null)
     {
         $this->store = $store;
@@ -54,6 +56,7 @@ class LaravelCacheAdapter implements CacheAdapterInterface
     {
         $clone = clone $this;
         $clone->tags = $tags;
+        $clone->repo = null;
         return $clone;
     }
 
@@ -62,17 +65,22 @@ class LaravelCacheAdapter implements CacheAdapterInterface
      */
     protected function cache(): \Illuminate\Contracts\Cache\Repository
     {
+        if ($this->repo !== null) {
+            return $this->repo;
+        }
+
         /** @var \Illuminate\Cache\CacheManager $cacheManager */
         $cacheManager = Cache::getFacadeRoot();
 
-        /** @var \Illuminate\Contracts\Cache\Repository $cache */
-        $cache = $this->store ? $cacheManager->store($this->store) : $cacheManager->store();
+        /** @var \Illuminate\Contracts\Cache\Repository $store */
+        $store = $this->store ? $cacheManager->store($this->store) : $cacheManager->store();
 
-        if (!empty($this->tags) && method_exists($cacheManager->getStore(), 'tags')) {
-            /** @var \Illuminate\Contracts\Cache\Repository */
-            return $cacheManager->tags($this->tags);
+        if (!empty($this->tags) && method_exists($store->getStore(), 'tags')) {
+            /** @var \Illuminate\Contracts\Cache\Repository $tagged */
+            $tagged = $store->tags($this->tags);
+            return $this->repo = $tagged;
         }
 
-        return $cache;
+        return $this->repo = $store;
     }
 }

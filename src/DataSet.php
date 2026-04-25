@@ -32,6 +32,13 @@ final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSeri
     protected array $pipes = [];
 
     /**
+     * Whether this DataSet is allowed to cache its materialized result.
+     * Generator-backed DataSets produced by take()/skip()/pluck() set this
+     * to false so we don't accidentally retain potentially huge sequences.
+     */
+    protected bool $allowMaterialize = true;
+
+    /**
      * @param iterable<TKey, TValue> $source
      */
     public function __construct(iterable $source, ?int $count = null)
@@ -132,7 +139,9 @@ final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSeri
             }
         })();
 
-        return new self($generator, min($limit, $this->count ?? PHP_INT_MAX));
+        $next = new self($generator, min($limit, $this->count ?? PHP_INT_MAX));
+        $next->allowMaterialize = false;
+        return $next;
     }
 
     /**
@@ -152,7 +161,9 @@ final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSeri
             }
         })();
 
-        return new self($generator, $this->count !== null ? max(0, $this->count - $offset) : null);
+        $next = new self($generator, $this->count !== null ? max(0, $this->count - $offset) : null);
+        $next->allowMaterialize = false;
+        return $next;
     }
 
     /**
@@ -210,7 +221,9 @@ final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSeri
             }
         })();
 
-        return new self($generator, $this->count);
+        $next = new self($generator, $this->count);
+        $next->allowMaterialize = false;
+        return $next;
     }
 
     /**
@@ -337,7 +350,18 @@ final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSeri
             return $this->materialized;
         }
 
-        return iterator_to_array($this, false);
+        $arr = iterator_to_array($this, false);
+
+        // Cache the array on the instance so subsequent all()/count()/iteration
+        // is O(1). Skipped for piped datasets (semantics could differ if pipes
+        // are added later) and for generator-backed clones produced by
+        // take()/skip()/pluck() which opt out via $allowMaterialize.
+        if (empty($this->pipes) && $this->allowMaterialize) {
+            $this->materialized = $arr;
+            $this->count = count($arr);
+        }
+
+        return $arr;
     }
 
     /**
@@ -364,32 +388,16 @@ final class DataSet implements IteratorAggregate, Countable, Arrayable, JsonSeri
             return max(0, $this->count);
         }
 
-        // Cache the computed count to avoid repeated iteration
-        // This is an acceptable side effect for performance
-        $this->count = iterator_count($this->getIteratorForCounting());
+        // For non-piped, materializable datasets, materialize once so that
+        // subsequent iteration / count / all() is O(1).
+        if (empty($this->pipes) && $this->allowMaterialize) {
+            return max(0, count($this->all()));
+        }
+
+        // Cache the computed count to avoid repeated iteration.
+        $this->count = iterator_count($this->getIterator());
 
         return max(0, $this->count);
-    }
-
-    /**
-     * Get a fresh iterator for counting (avoids consuming the main iterator)
-     *
-     * @return \Traversable<TKey, TValue>
-     */
-    private function getIteratorForCounting(): \Traversable
-    {
-        $source = $this->materialized ?? $this->source;
-
-        foreach ($source as $key => $item) {
-            $result = $item;
-            foreach ($this->pipes as $pipe) {
-                $result = $pipe($result, $key);
-                if ($result === false) {
-                    continue 2;
-                }
-            }
-            yield $key => $result;
-        }
     }
 
     public function isEmpty(): bool
