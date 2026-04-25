@@ -12,13 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-04-25
+## [0.5.0] - 2026-04-25
 
-Breaking-change release. See the **Upgrade guide** at the bottom of this
-entry for migration steps.
+Breaking-change release focused on query-count reduction and removing
+several CPU-quadratic patterns from the resolution pipeline. See the
+**Upgrade guide** at the bottom of this entry.
 
 ### Added
-- Laravel 13 support.
 - Constraint-signature aggregate batching: when multiple aggregates of the
   same model share the same `where` constraints they collapse into one SQL
   `SELECT` even when other aggregates of that model use *different*
@@ -41,8 +41,6 @@ entry for migration steps.
   single-invocation counters, materialization checks).
 
 ### Changed
-- **BREAKING**: dropped Laravel 10 support. Minimum required versions are now
-  Laravel 11, 12 or 13 with PHP 8.2+ (PHP 8.3+ for Laravel 13).
 - **BREAKING**: `Resolver::resolveValue()` no longer treats plain strings or
   arrays as callables. Only `Closure` instances and invokable objects are
   invoked against the resolution state. Previously a constraint like
@@ -88,24 +86,38 @@ entry for migration steps.
   function name (such as Laravel's `old`, `auth`, `request`) were
   inadvertently invoked instead of being treated as literal values.
 
-### Upgrade guide (0.3.x → 0.4.0)
+### Upgrade guide (0.4.x → 0.5.0)
 
-1. **Laravel 10**: bump your app to Laravel 11, 12 or 13.
-2. **Deferred values**: if you passed a non-Closure callable (a string
+1. **Deferred values**: if you passed a non-Closure callable (a string
    function name, a `[Class, 'method']` pair) as a constraint value,
    replace it with a Closure: `where('age', '>', fn() => $minAge())`.
-3. **Side-effecting ID closures**: closures supplied to `->one(...)` /
+2. **Side-effecting ID closures**: closures supplied to `->one(...)` /
    `->many(...)` are now called once instead of twice per resolve. Verify
    any closures with side effects.
-4. **Cache tagging on non-default stores**: tagged cache operations now go
+3. **Cache tagging on non-default stores**: tagged cache operations now go
    to the configured store. If you depended on the previous (incorrect)
    behavior of always hitting the default store, update your store
    configuration explicitly.
-5. **Eager-load merge**: behavior is unchanged by default. Opt in by
+4. **Eager-load merge**: behavior is unchanged by default. Opt in by
    setting `'merge_shared_eager_loads' => true` in the `query` config
    block (or via `DATAPROXY_MERGE_SHARED_EAGER_LOADS=true`) when you want
    batched aliases that request the same relation to receive a unioned
    result instead of last-write-wins.
+
+## [0.4.1] - 2026-04-25
+
+### Fixed
+- CI matrix: exclude PHP 8.2 from the Laravel 13 job (Laravel 13 requires
+  PHP 8.3+).
+
+## [0.4.0] - 2026-04-25
+
+### Added
+- Laravel 13 support.
+
+### Changed
+- **BREAKING**: dropped Laravel 10 support. Minimum required versions are
+  now Laravel 11, 12 or 13 with PHP 8.2+ (PHP 8.3+ for Laravel 13).
 
 ## [0.3.0] - 2026-03-22
 
@@ -148,7 +160,9 @@ Initial release.
 - Integration with `adrosoftware/laravel-model-presenter`.
 - PHPStan level 9 compliance.
 
-[Unreleased]: https://github.com/adrorocker/laravel-data-proxy/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/adrorocker/laravel-data-proxy/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/adrorocker/laravel-data-proxy/compare/0.4.1...0.5.0
+[0.4.1]: https://github.com/adrorocker/laravel-data-proxy/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/adrorocker/laravel-data-proxy/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/adrorocker/laravel-data-proxy/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/adrorocker/laravel-data-proxy/compare/0.1.0...0.2.0
