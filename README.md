@@ -24,6 +24,11 @@ A GraphQL-like declarative data retrieval layer for Laravel with automatic query
 - **Pagination** - First-class pagination handling
 - **Metrics Tracking** - Monitor query counts, execution time, and memory usage
 
+## Requirements
+
+- PHP 8.2 or higher
+- Laravel 11.x, 12.x, or 13.x
+
 ## Installation
 
 ```bash

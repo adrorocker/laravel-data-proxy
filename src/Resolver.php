@@ -438,6 +438,7 @@ class Resolver
 
             // Don't quote * for COUNT(*)
             $columnExpr = $column === '*' ? '*' : "`{$column}`";
+            // @phpstan-ignore argument.type (type/column/alias validated against whitelist + regex above; L13 narrowed DB::raw() to literal-string)
             $selects[] = DB::raw("{$type}({$columnExpr}) as `{$alias}`");
         }
 
@@ -743,6 +744,7 @@ class Resolver
                     $sql = $c['sql'];
                     /** @var array<int, mixed> $bindings */
                     $bindings = $c['bindings'] ?? [];
+                    // @phpstan-ignore argument.type (raw constraint contract: caller provides SQL + bindings; L13 narrowed whereRaw() to literal-string)
                     $query->whereRaw($sql, $bindings);
                     break;
             }
